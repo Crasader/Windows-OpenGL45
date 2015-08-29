@@ -11,6 +11,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 HGLRC CreateOpenGLContext(HWND hwnd);
 void DeleteOpenGLContext(HGLRC hglrc);
 void RegisterErrorCallback();
+void Paint(HWND hwnd);
 
 static FILE *LogFile;
 
@@ -39,7 +40,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 04"),
+        class_name, TEXT("Step 05"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
         nullptr, nullptr, hInstance, nullptr);
@@ -70,6 +71,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         hglrc = CreateOpenGLContext(hwnd);
         InitOpenGLFunctions();
         RegisterErrorCallback();
+        glClearColor(0.6f, 0.8f, 0.8f, 1.0f);
+        return 0;
+
+    case WM_PAINT:
+        Paint(hwnd);
         return 0;
 
     case WM_DESTROY:
@@ -166,4 +172,15 @@ void RegisterErrorCallback()
         GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
 
     glEnable(GL_DEBUG_OUTPUT);
+}
+
+void Paint(HWND hwnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd, &ps);
+
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    SwapBuffers(hdc);
+    EndPaint(hwnd, &ps);
 }
