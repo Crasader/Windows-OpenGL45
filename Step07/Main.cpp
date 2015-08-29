@@ -6,17 +6,23 @@
 #include "glcorearb.h"
 #include "wglext.h"
 #include "OpenGL45.h"
+#include "resource.h"
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 HGLRC CreateOpenGLContext(HWND hwnd);
 void DeleteOpenGLContext(HGLRC hglrc);
 void RegisterErrorCallback();
+void LoadShader();
+void SetupModel();
+void Paint(HWND hwnd);
 
-static FILE *LogFile;
+static FILE *logFile;
+
+static GLuint vertexArray;
 
 int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLine, int nCmdShow)
 {
-    fopen_s(&LogFile, "log.txt", "w");
+    fopen_s(&logFile, "log.txt", "w");
 
     LPCTSTR class_name = TEXT("OpenGL Window");
 
@@ -39,7 +45,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 04"),
+        class_name, TEXT("Step 07"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
         nullptr, nullptr, hInstance, nullptr);
@@ -55,7 +61,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
         DispatchMessage(&msg);
     }
 
-    fclose(LogFile);
+    fclose(logFile);
 
     return (int)msg.wParam;
 }
@@ -70,6 +76,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         hglrc = CreateOpenGLContext(hwnd);
         InitOpenGLFunctions();
         RegisterErrorCallback();
+        LoadShader();
+        SetupModel();
+        glClearColor(0.6f, 0.8f, 0.8f, 1.0f);
+        glPointSize(8.0f);
+        return 0;
+
+    case WM_PAINT:
+        Paint(hwnd);
         return 0;
 
     case WM_DESTROY:
@@ -155,7 +169,7 @@ void APIENTRY OpenGLErrorCallback(
     const char *typeStr = DebugTypeToString(type);
     const char *severityStr = DebugSeverityToString(severity);
 
-    fprintf(LogFile, "%s:%s[%s](%d) %s\n",
+    fprintf(logFile, "%s:%s[%s](%d) %s\n",
         sourceStr, typeStr, severityStr, id, message);
 }
 
@@ -166,4 +180,70 @@ void RegisterErrorCallback()
         GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
 
     glEnable(GL_DEBUG_OUTPUT);
+}
+
+void AttachShader(GLuint program, GLuint shaderType, WORD resourceId)
+{
+    HRSRC hrsrc = FindResource(
+        nullptr, MAKEINTRESOURCE(resourceId), TEXT("SHADER"));
+    HGLOBAL hglobal = LoadResource(nullptr, hrsrc);
+    const GLchar *shaderString = static_cast<const GLchar *>(LockResource(hglobal));
+    const GLint shaderLength = SizeofResource(nullptr, hrsrc);
+
+    GLuint shader = glCreateShader(shaderType);
+    glShaderSource(shader, 1, &shaderString, &shaderLength);
+    glCompileShader(shader);
+    glAttachShader(program, shader);
+    glDeleteShader(shader);
+}
+
+void LoadShader()
+{
+    GLuint program = glCreateProgram();
+    AttachShader(program, GL_VERTEX_SHADER, ID_VERTEX_SHADER);
+    AttachShader(program, GL_FRAGMENT_SHADER, ID_FRAGMENT_SHADER);
+    glLinkProgram(program);
+    glUseProgram(program);
+}
+
+void SetupModel()
+{
+    // Vertex Buffer (location = 0) 座標データ
+    GLuint positionLocation = 0;
+    GLuint positionBindindex = 0;
+
+    GLuint positionBuffer;
+    glCreateBuffers(1, &positionBuffer);
+
+    GLfloat positionData[] = { 0.0f, 0.0f };
+
+    glNamedBufferData(positionBuffer,
+        sizeof(positionData), positionData, GL_STATIC_DRAW);
+
+    // Vertex Array
+    glCreateVertexArrays(1, &vertexArray);
+
+    glEnableVertexArrayAttrib(vertexArray, positionLocation);
+    glVertexArrayAttribFormat(vertexArray, positionLocation,
+        2, GL_FLOAT, GL_FALSE, 0);
+
+    glVertexArrayAttribBinding(vertexArray, positionLocation,
+        positionBindindex);
+    glVertexArrayVertexBuffer(vertexArray, positionBindindex,
+        positionBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
+}
+
+void Paint(HWND hwnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd, &ps);
+
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glPointSize(8.0);
+    glBindVertexArray(vertexArray);
+    glDrawArrays(GL_POINTS, 0, 1);
+
+    SwapBuffers(hdc);
+    EndPaint(hwnd, &ps);
 }
