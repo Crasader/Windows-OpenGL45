@@ -45,7 +45,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 07"),
+        class_name, TEXT("Step 08"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
         nullptr, nullptr, hInstance, nullptr);
@@ -215,10 +215,30 @@ void SetupModel()
     GLuint positionBuffer;
     glCreateBuffers(1, &positionBuffer);
 
-    GLfloat positionData[] = { 0.0f, 0.0f };
+    GLfloat positionData[] = {
+        -0.5f, 0.0f,
+        0.0f, 0.0f,
+        0.5f, 0.0f
+    };
 
     glNamedBufferData(positionBuffer,
         sizeof(positionData), positionData, GL_STATIC_DRAW);
+
+    // Vertex Buffer (location = 1) 色データ
+    GLuint colorLocation = 1;
+    GLuint colorBindindex = 1;
+
+    GLuint colorBuffer;
+    glCreateBuffers(1, &colorBuffer);
+
+    GLfloat colorData[] = {
+        0.6f, 0.0f, 0.0f,
+        0.0f, 0.6f, 0.0f,
+        0.0f, 0.0f, 0.6f
+    };
+
+    glNamedBufferData(colorBuffer,
+        sizeof(colorData), colorData, GL_STATIC_DRAW);
 
     // Vertex Array
     glCreateVertexArrays(1, &vertexArray);
@@ -231,6 +251,15 @@ void SetupModel()
         positionBindindex);
     glVertexArrayVertexBuffer(vertexArray, positionBindindex,
         positionBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
+
+    glEnableVertexArrayAttrib(vertexArray, colorLocation);
+    glVertexArrayAttribFormat(vertexArray, colorLocation,
+        3, GL_FLOAT, GL_FALSE, 0);
+
+    glVertexArrayAttribBinding(vertexArray, colorLocation,
+        colorBindindex);
+    glVertexArrayVertexBuffer(vertexArray, colorBindindex,
+        colorBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 3);
 }
 
 void Paint(HWND hwnd)
@@ -241,7 +270,7 @@ void Paint(HWND hwnd)
     glClear(GL_COLOR_BUFFER_BIT);
 
     glBindVertexArray(vertexArray);
-    glDrawArrays(GL_POINTS, 0, 1);
+    glDrawArrays(GL_POINTS, 0, 3);
 
     SwapBuffers(hdc);
     EndPaint(hwnd, &ps);

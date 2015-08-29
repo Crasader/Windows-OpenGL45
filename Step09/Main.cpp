@@ -12,9 +12,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 HGLRC CreateOpenGLContext(HWND hwnd);
 void DeleteOpenGLContext(HGLRC hglrc);
 void RegisterErrorCallback();
-void LoadShader();
+GLuint LoadShader();
 void SetupModel();
-void Paint(HWND hwnd);
+void Paint(HWND hwnd, GLuint position, GLuint color);
 
 static FILE *logFile;
 
@@ -45,7 +45,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 07"),
+        class_name, TEXT("Step 09"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
         nullptr, nullptr, hInstance, nullptr);
@@ -69,6 +69,8 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
 LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     static HGLRC hglrc;
+    static GLuint program;
+    static GLuint position, color;
 
     switch (uMsg)
     {
@@ -76,14 +78,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         hglrc = CreateOpenGLContext(hwnd);
         InitOpenGLFunctions();
         RegisterErrorCallback();
-        LoadShader();
-        SetupModel();
+        program = LoadShader();
+        position = glGetUniformLocation(program, "position");
+        color = glGetUniformLocation(program, "color");
+        glCreateVertexArrays(1, &vertexArray);
         glClearColor(0.6f, 0.8f, 0.8f, 1.0f);
         glPointSize(8.0f);
         return 0;
 
     case WM_PAINT:
-        Paint(hwnd);
+        Paint(hwnd, position, color);
         return 0;
 
     case WM_DESTROY:
@@ -197,43 +201,17 @@ void AttachShader(GLuint program, GLuint shaderType, WORD resourceId)
     glDeleteShader(shader);
 }
 
-void LoadShader()
+GLuint LoadShader()
 {
     GLuint program = glCreateProgram();
     AttachShader(program, GL_VERTEX_SHADER, ID_VERTEX_SHADER);
     AttachShader(program, GL_FRAGMENT_SHADER, ID_FRAGMENT_SHADER);
     glLinkProgram(program);
     glUseProgram(program);
+    return program;
 }
 
-void SetupModel()
-{
-    // Vertex Buffer (location = 0) 座標データ
-    GLuint positionLocation = 0;
-    GLuint positionBindindex = 0;
-
-    GLuint positionBuffer;
-    glCreateBuffers(1, &positionBuffer);
-
-    GLfloat positionData[] = { 0.0f, 0.0f };
-
-    glNamedBufferData(positionBuffer,
-        sizeof(positionData), positionData, GL_STATIC_DRAW);
-
-    // Vertex Array
-    glCreateVertexArrays(1, &vertexArray);
-
-    glEnableVertexArrayAttrib(vertexArray, positionLocation);
-    glVertexArrayAttribFormat(vertexArray, positionLocation,
-        2, GL_FLOAT, GL_FALSE, 0);
-
-    glVertexArrayAttribBinding(vertexArray, positionLocation,
-        positionBindindex);
-    glVertexArrayVertexBuffer(vertexArray, positionBindindex,
-        positionBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
-}
-
-void Paint(HWND hwnd)
+void Paint(HWND hwnd, GLuint position, GLuint color)
 {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
@@ -241,6 +219,17 @@ void Paint(HWND hwnd)
     glClear(GL_COLOR_BUFFER_BIT);
 
     glBindVertexArray(vertexArray);
+
+    glUniform2f(position, -0.5f, 0.0f);
+    glUniform3f(color, 0.6f, 0.0f, 0.0f);
+    glDrawArrays(GL_POINTS, 0, 1);
+
+    glUniform2f(position, 0.0f, 0.0f);
+    glUniform3f(color, 0.0f, 0.6f, 0.0f);
+    glDrawArrays(GL_POINTS, 0, 1);
+
+    glUniform2f(position, 0.5f, 0.0f);
+    glUniform3f(color, 0.0f, 0.0f, 0.6f);
     glDrawArrays(GL_POINTS, 0, 1);
 
     SwapBuffers(hdc);
