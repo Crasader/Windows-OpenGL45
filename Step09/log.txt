@@ -1,0 +1,1 @@
+API:Performance[Medium](131218) Program/shader state performance warning: Fragment Shader is going to be recompiled because the shader key based on GL state mismatches.
