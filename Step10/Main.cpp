@@ -3,21 +3,33 @@
 #include <Windows.h>
 #include <tchar.h>
 #include <stdio.h>
+#include <vector>
 #include "glcorearb.h"
 #include "wglext.h"
 #include "OpenGL45.h"
 #include "resource.h"
+
+struct Vec2
+{
+    float x;
+    float y;
+
+    Vec2() : x(0.0f), y(0.0f) {}
+    Vec2(GLfloat x, GLfloat y) : x(x), y(y) { }
+};
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 HGLRC CreateOpenGLContext(HWND hwnd);
 void DeleteOpenGLContext(HGLRC hglrc);
 void RegisterErrorCallback();
 GLuint LoadShader();
-void Paint(HWND hwnd, GLuint position, GLuint color);
+void Paint(HWND hwnd);
 
 static FILE *logFile;
 
 static GLuint vertexArray;
+
+static std::vector<Vec2> positions;
 
 int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLine, int nCmdShow)
 {
@@ -44,7 +56,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 09"),
+        class_name, TEXT("Step 10"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
         nullptr, nullptr, hInstance, nullptr);
@@ -69,7 +81,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     static HGLRC hglrc;
     static GLuint program;
-    static GLuint position, color;
+    static GLuint width, height;
 
     switch (uMsg)
     {
@@ -78,15 +90,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         InitOpenGLFunctions();
         RegisterErrorCallback();
         program = LoadShader();
-        position = glGetUniformLocation(program, "position");
-        color = glGetUniformLocation(program, "color");
+        width = glGetUniformLocation(program, "width");
+        height = glGetUniformLocation(program, "height");
         glCreateVertexArrays(1, &vertexArray);
         glClearColor(0.6f, 0.8f, 0.8f, 1.0f);
         glPointSize(8.0f);
         return 0;
 
     case WM_PAINT:
-        Paint(hwnd, position, color);
+        Paint(hwnd);
+        return 0;
+
+    case WM_SIZE:
+        glViewport(0, 0, LOWORD(lParam), HIWORD(lParam));
+        glUniform1f(width, LOWORD(lParam));
+        glUniform1f(height, HIWORD(lParam));
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        positions.push_back(Vec2(LOWORD(lParam), HIWORD(lParam)));
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_RBUTTONDOWN:
+        positions.clear();
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_DESTROY:
@@ -210,7 +239,7 @@ GLuint LoadShader()
     return program;
 }
 
-void Paint(HWND hwnd, GLuint position, GLuint color)
+void Paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
@@ -219,17 +248,11 @@ void Paint(HWND hwnd, GLuint position, GLuint color)
 
     glBindVertexArray(vertexArray);
 
-    glUniform2f(position, -0.5f, 0.0f);
-    glUniform3f(color, 0.6f, 0.0f, 0.0f);
-    glDrawArrays(GL_POINTS, 0, 1);
-
-    glUniform2f(position, 0.0f, 0.0f);
-    glUniform3f(color, 0.0f, 0.6f, 0.0f);
-    glDrawArrays(GL_POINTS, 0, 1);
-
-    glUniform2f(position, 0.5f, 0.0f);
-    glUniform3f(color, 0.0f, 0.0f, 0.6f);
-    glDrawArrays(GL_POINTS, 0, 1);
+    for (const auto &vec2 : positions)
+    {
+        glVertexAttrib2f(0, vec2.x, vec2.y);
+        glDrawArrays(GL_POINTS, 0, 1);
+    }
 
     SwapBuffers(hdc);
     EndPaint(hwnd, &ps);

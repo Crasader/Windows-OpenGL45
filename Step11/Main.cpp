@@ -3,21 +3,42 @@
 #include <Windows.h>
 #include <tchar.h>
 #include <stdio.h>
+#include <vector>
 #include "glcorearb.h"
 #include "wglext.h"
 #include "OpenGL45.h"
 #include "resource.h"
+
+struct Line
+{
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+
+    Line() : x0(0.0f), y0(0.0f), x1(0.0f), y1(0.0f) {}
+    Line(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1)
+        : x0(x0), y0(y0), x1(x1), y1(y1) { }
+};
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 HGLRC CreateOpenGLContext(HWND hwnd);
 void DeleteOpenGLContext(HGLRC hglrc);
 void RegisterErrorCallback();
 GLuint LoadShader();
-void Paint(HWND hwnd, GLuint position, GLuint color);
+void SetupModel();
+void UpdateVertexBuffer();
+void Paint(HWND hwnd);
 
 static FILE *logFile;
 
+static GLuint positionBuffer;
 static GLuint vertexArray;
+
+static std::vector<Line> lines;
+static float drag_start_x;
+static float drag_start_y;
+static bool is_mouse_down = false;
 
 int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLine, int nCmdShow)
 {
@@ -44,7 +65,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 09"),
+        class_name, TEXT("Step 11"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
         nullptr, nullptr, hInstance, nullptr);
@@ -69,7 +90,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     static HGLRC hglrc;
     static GLuint program;
-    static GLuint position, color;
+    static GLuint width, height;
 
     switch (uMsg)
     {
@@ -78,15 +99,61 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         InitOpenGLFunctions();
         RegisterErrorCallback();
         program = LoadShader();
-        position = glGetUniformLocation(program, "position");
-        color = glGetUniformLocation(program, "color");
-        glCreateVertexArrays(1, &vertexArray);
+        width = glGetUniformLocation(program, "width");
+        height = glGetUniformLocation(program, "height");
+        SetupModel();
         glClearColor(0.6f, 0.8f, 0.8f, 1.0f);
-        glPointSize(8.0f);
+        glLineWidth(2.0f);
         return 0;
 
     case WM_PAINT:
-        Paint(hwnd, position, color);
+        Paint(hwnd);
+        return 0;
+
+    case WM_SIZE:
+        glViewport(0, 0, LOWORD(lParam), HIWORD(lParam));
+        glUniform1f(width, LOWORD(lParam));
+        glUniform1f(height, HIWORD(lParam));
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        is_mouse_down = true;
+        drag_start_x = LOWORD(lParam);
+        drag_start_y = HIWORD(lParam);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_LBUTTONUP:
+        is_mouse_down = false;
+        lines.push_back(Line(
+            drag_start_x, drag_start_y,
+            LOWORD(lParam), HIWORD(lParam)));
+        UpdateVertexBuffer();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_MOUSEMOVE:
+        if (is_mouse_down)
+        {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+
+            GLfloat vertices[] = {
+                drag_start_x, drag_start_y,
+                pt.x, pt.y
+            };
+
+            glNamedBufferSubData(positionBuffer,
+                0, 4 * sizeof(GLfloat), vertices);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+
+    case WM_RBUTTONDOWN:
+        lines.clear();
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_DESTROY:
@@ -210,7 +277,53 @@ GLuint LoadShader()
     return program;
 }
 
-void Paint(HWND hwnd, GLuint position, GLuint color)
+void SetupModel()
+{
+    // Vertex Buffer
+    GLuint positionLocation = 0;
+    GLuint positionBindindex = 0;
+
+    glCreateBuffers(1, &positionBuffer);
+
+    GLfloat positionData[] = {
+        0.0f, 0.0f, 0.0f, 0.0f
+    };
+
+    glNamedBufferData(positionBuffer,
+        sizeof(positionData), positionData, GL_DYNAMIC_DRAW);
+
+    // Vertex Array
+    glCreateVertexArrays(1, &vertexArray);
+
+    glEnableVertexArrayAttrib(vertexArray, positionLocation);
+    glVertexArrayAttribFormat(vertexArray, positionLocation,
+        2, GL_FLOAT, GL_FALSE, 0);
+
+    glVertexArrayAttribBinding(vertexArray, positionLocation,
+        positionBindindex);
+    glVertexArrayVertexBuffer(vertexArray, positionBindindex,
+        positionBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
+}
+
+void UpdateVertexBuffer()
+{
+    std::size_t size = (lines.size() + 1) * 4 * sizeof(GLfloat);
+    GLfloat *vertices = new GLfloat[size];
+
+    for (int i = 0; i < lines.size(); ++i)
+    {
+        vertices[(i + 1) * 4 + 0] = lines[i].x0;
+        vertices[(i + 1) * 4 + 1] = lines[i].y0;
+        vertices[(i + 1) * 4 + 2] = lines[i].x1;
+        vertices[(i + 1) * 4 + 3] = lines[i].y1;
+    }
+
+    glNamedBufferData(positionBuffer, size, vertices, GL_DYNAMIC_DRAW);
+
+    delete[] vertices;
+}
+
+void Paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
@@ -218,19 +331,17 @@ void Paint(HWND hwnd, GLuint position, GLuint color)
     glClear(GL_COLOR_BUFFER_BIT);
 
     glBindVertexArray(vertexArray);
-
-    glUniform2f(position, -0.5f, 0.0f);
-    glUniform3f(color, 0.6f, 0.0f, 0.0f);
-    glDrawArrays(GL_POINTS, 0, 1);
-
-    glUniform2f(position, 0.0f, 0.0f);
-    glUniform3f(color, 0.0f, 0.6f, 0.0f);
-    glDrawArrays(GL_POINTS, 0, 1);
-
-    glUniform2f(position, 0.5f, 0.0f);
-    glUniform3f(color, 0.0f, 0.0f, 0.6f);
-    glDrawArrays(GL_POINTS, 0, 1);
-
+    if (is_mouse_down)
+    {
+        glDrawArrays(GL_LINES, 0, 
+            static_cast<GLsizei>(lines.size()) * 2 + 2);
+    }
+    else
+    {
+        glDrawArrays(GL_LINES, 2, 
+            static_cast<GLsizei>(lines.size()) * 2);
+    }
+    
     SwapBuffers(hdc);
     EndPaint(hwnd, &ps);
 }
