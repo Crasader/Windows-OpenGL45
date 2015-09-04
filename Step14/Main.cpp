@@ -4,41 +4,42 @@
 #include <tchar.h>
 #include <stdio.h>
 #include <vector>
+#include <cmath>
 #include "glcorearb.h"
 #include "wglext.h"
 #include "OpenGL45.h"
 #include "resource.h"
-
-struct Line
-{
-    float x0;
-    float y0;
-    float x1;
-    float y1;
-
-    Line() : x0(0.0f), y0(0.0f), x1(0.0f), y1(0.0f) {}
-    Line(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1)
-        : x0(x0), y0(y0), x1(x1), y1(y1) { }
-};
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 HGLRC CreateOpenGLContext(HWND hwnd);
 void DeleteOpenGLContext(HGLRC hglrc);
 void RegisterErrorCallback();
 GLuint LoadShader();
-void SetupModel();
-void UpdateVertexBuffer();
+GLuint LoadTexture(WORD resourceId);
+void SetupModel(HWND hwnd);
 void Paint(HWND hwnd);
 
 static FILE *logFile;
 
 static GLuint positionBuffer;
+static GLuint uvBuffer;
 static GLuint vertexArray;
-
-static std::vector<Line> lines;
-static float drag_start_x;
-static float drag_start_y;
-static bool is_mouse_down = false;
+static GLfloat positions[6 * 2] = {
+    0.0f, 0.0f,
+    0.0f, 300.0f,
+    400.0f, 300.0f,
+    0.0f, 0.0f,
+    400.0f, 300.0f,
+    400.0f, 0.0f
+};
+static GLfloat uvs[6 * 2] = {
+    0.0f, 1.0f,
+    0.0f, 0.0f,
+    1.0f, 0.0f,
+    0.0f, 1.0f,
+    1.0f, 0.0f,
+    1.0f, 1.0f
+};
 
 int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLine, int nCmdShow)
 {
@@ -65,9 +66,9 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 11"),
+        class_name, TEXT("Step 14"),
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
+        CW_USEDEFAULT, CW_USEDEFAULT, 640, 480,
         nullptr, nullptr, hInstance, nullptr);
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -90,7 +91,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     static HGLRC hglrc;
     static GLuint program;
-    static GLuint width, height;
+    static GLuint width, height, texture;
+    static GLuint imgWidth, imgHeight;
 
     switch (uMsg)
     {
@@ -99,11 +101,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         InitOpenGLFunctions();
         RegisterErrorCallback();
         program = LoadShader();
+
         width = glGetUniformLocation(program, "width");
         height = glGetUniformLocation(program, "height");
-        SetupModel();
-        glClearColor(0.6f, 0.8f, 0.8f, 1.0f);
-        glLineWidth(2.0f);
+
+        texture = glGetUniformLocation(program, "texture");
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, LoadTexture(ID_TEXTURE));
+        glUniform1i(texture, 0);
+
+        imgWidth = glGetUniformLocation(program, "img_width");
+        imgHeight = glGetUniformLocation(program, "img_height");
+        glUniform1f(imgWidth, 400.0f);
+        glUniform1f(imgHeight, 300.0f);
+
+        SetupModel(hwnd);
+        glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
         return 0;
 
     case WM_PAINT:
@@ -114,46 +127,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         glViewport(0, 0, LOWORD(lParam), HIWORD(lParam));
         glUniform1f(width, LOWORD(lParam));
         glUniform1f(height, HIWORD(lParam));
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
-
-    case WM_LBUTTONDOWN:
-        is_mouse_down = true;
-        drag_start_x = LOWORD(lParam);
-        drag_start_y = HIWORD(lParam);
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
-
-    case WM_LBUTTONUP:
-        is_mouse_down = false;
-        lines.push_back(Line(
-            drag_start_x, drag_start_y,
-            LOWORD(lParam), HIWORD(lParam)));
-        UpdateVertexBuffer();
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
-
-    case WM_MOUSEMOVE:
-        if (is_mouse_down)
-        {
-            POINT pt;
-            GetCursorPos(&pt);
-            ScreenToClient(hwnd, &pt);
-
-            GLfloat vertices[] = {
-                drag_start_x, drag_start_y,
-                static_cast<GLfloat>(pt.x),
-                static_cast<GLfloat>(pt.y)
-            };
-
-            glNamedBufferSubData(positionBuffer,
-                0, 4 * sizeof(GLfloat), vertices);
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
-        return 0;
-
-    case WM_RBUTTONDOWN:
-        lines.clear();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
@@ -264,6 +237,22 @@ void AttachShader(GLuint program, GLuint shaderType, WORD resourceId)
     GLuint shader = glCreateShader(shaderType);
     glShaderSource(shader, 1, &shaderString, &shaderLength);
     glCompileShader(shader);
+
+    GLint result;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &result);
+    if (result == GL_FALSE)
+    {
+        GLint length;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
+        if (length > 0)
+        {
+            GLchar *buf = new GLchar[length];
+            glGetShaderInfoLog(shader, length, nullptr, buf);
+            fprintf(logFile, "Shader compilation failed:\n%s\n", buf);
+            delete[] buf;
+        }
+    }
+
     glAttachShader(program, shader);
     glDeleteShader(shader);
 }
@@ -278,20 +267,49 @@ GLuint LoadShader()
     return program;
 }
 
-void SetupModel()
+GLuint LoadTexture(WORD resourceId)
 {
-    // Vertex Buffer
+    HRSRC hrsrc = FindResource(
+        nullptr, MAKEINTRESOURCE(resourceId), RT_BITMAP);
+    HGLOBAL hglobal = LoadResource(nullptr, hrsrc);
+    const GLbyte *data = static_cast<const GLbyte *>(LockResource(hglobal));
+
+    const int width = *reinterpret_cast<const int *>(data + 4);
+    const int height = *reinterpret_cast<const int *>(data + 8);
+
+    GLuint texture;
+    glCreateTextures(GL_TEXTURE_2D, 1, &texture);
+    glTextureStorage2D(texture, 1, GL_RGB8, width, height);
+    glTextureSubImage2D(texture, 0, 0, 0, width, height, GL_BGR, GL_UNSIGNED_BYTE, data + 40);
+
+    glTextureParameteri(texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(texture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+    return texture;
+}
+
+void SetupModel(HWND hwnd)
+{
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+
+    // Vertex Buffer (position)
     GLuint positionLocation = 0;
     GLuint positionBindindex = 0;
 
     glCreateBuffers(1, &positionBuffer);
 
-    GLfloat positionData[] = {
-        0.0f, 0.0f, 0.0f, 0.0f
-    };
-
     glNamedBufferData(positionBuffer,
-        sizeof(positionData), positionData, GL_DYNAMIC_DRAW);
+        sizeof(positions), positions, GL_STATIC_DRAW);
+
+    // Vertex Buffer (uv)
+    GLuint uvLocation = 1;
+    GLuint uvBindindex = 1;
+
+    glCreateBuffers(1, &uvBuffer);
+
+    glNamedBufferData(uvBuffer,
+        sizeof(uvs), uvs, GL_STATIC_DRAW);
 
     // Vertex Array
     glCreateVertexArrays(1, &vertexArray);
@@ -304,24 +322,15 @@ void SetupModel()
         positionBindindex);
     glVertexArrayVertexBuffer(vertexArray, positionBindindex,
         positionBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
-}
 
-void UpdateVertexBuffer()
-{
-    std::size_t size = (lines.size() + 1) * 4 * sizeof(GLfloat);
-    GLfloat *vertices = new GLfloat[size];
+    glEnableVertexArrayAttrib(vertexArray, uvLocation);
+    glVertexArrayAttribFormat(vertexArray, uvLocation,
+        2, GL_FLOAT, GL_FALSE, 0);
 
-    for (int i = 0; i < lines.size(); ++i)
-    {
-        vertices[(i + 1) * 4 + 0] = lines[i].x0;
-        vertices[(i + 1) * 4 + 1] = lines[i].y0;
-        vertices[(i + 1) * 4 + 2] = lines[i].x1;
-        vertices[(i + 1) * 4 + 3] = lines[i].y1;
-    }
-
-    glNamedBufferData(positionBuffer, size, vertices, GL_DYNAMIC_DRAW);
-
-    delete[] vertices;
+    glVertexArrayAttribBinding(vertexArray, uvLocation,
+        uvBindindex);
+    glVertexArrayVertexBuffer(vertexArray, uvBindindex,
+        uvBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
 }
 
 void Paint(HWND hwnd)
@@ -332,17 +341,8 @@ void Paint(HWND hwnd)
     glClear(GL_COLOR_BUFFER_BIT);
 
     glBindVertexArray(vertexArray);
-    if (is_mouse_down)
-    {
-        glDrawArrays(GL_LINES, 0, 
-            static_cast<GLsizei>(lines.size()) * 2 + 2);
-    }
-    else
-    {
-        glDrawArrays(GL_LINES, 2, 
-            static_cast<GLsizei>(lines.size()) * 2);
-    }
-    
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
     SwapBuffers(hdc);
     EndPaint(hwnd, &ps);
 }
