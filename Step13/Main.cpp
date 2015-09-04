@@ -4,29 +4,18 @@
 #include <tchar.h>
 #include <stdio.h>
 #include <vector>
+#include <cmath>
 #include "glcorearb.h"
 #include "wglext.h"
 #include "OpenGL45.h"
 #include "resource.h"
-
-struct Line
-{
-    float x0;
-    float y0;
-    float x1;
-    float y1;
-
-    Line() : x0(0.0f), y0(0.0f), x1(0.0f), y1(0.0f) {}
-    Line(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1)
-        : x0(x0), y0(y0), x1(x1), y1(y1) { }
-};
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 HGLRC CreateOpenGLContext(HWND hwnd);
 void DeleteOpenGLContext(HGLRC hglrc);
 void RegisterErrorCallback();
 GLuint LoadShader();
-void SetupModel();
+void SetupModel(HWND hwnd);
 void UpdateVertexBuffer();
 void Paint(HWND hwnd);
 
@@ -34,11 +23,14 @@ static FILE *logFile;
 
 static GLuint positionBuffer;
 static GLuint vertexArray;
+static GLfloat points[3 * 2];
 
-static std::vector<Line> lines;
-static float drag_start_x;
-static float drag_start_y;
+static int drag_index;
 static bool is_mouse_down = false;
+
+static GLuint color;
+
+static const float pi = std::acosf(-1.0f);
 
 int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLine, int nCmdShow)
 {
@@ -65,9 +57,9 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 11"),
+        class_name, TEXT("Step 13"),
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
+        CW_USEDEFAULT, CW_USEDEFAULT, 640, 480,
         nullptr, nullptr, hInstance, nullptr);
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -101,8 +93,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         program = LoadShader();
         width = glGetUniformLocation(program, "width");
         height = glGetUniformLocation(program, "height");
-        SetupModel();
+        color = glGetUniformLocation(program, "color");
+        SetupModel(hwnd);
+        UpdateVertexBuffer();
         glClearColor(0.6f, 0.8f, 0.8f, 1.0f);
+        glPointSize(8.0f);
         glLineWidth(2.0f);
         return 0;
 
@@ -118,17 +113,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         return 0;
 
     case WM_LBUTTONDOWN:
-        is_mouse_down = true;
-        drag_start_x = LOWORD(lParam);
-        drag_start_y = HIWORD(lParam);
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
+    {
+        float mx = LOWORD(lParam);
+        float my = HIWORD(lParam);
+
+        for (int i = 0; i < 3; ++i)
+        {
+            float px = points[i * 2];
+            float py = points[i * 2 + 1];
+            if (std::sqrtf((px - mx) * (px - mx) + (py - my) * (py - my)) < 5.0f)
+            {
+                drag_index = i;
+                is_mouse_down = true;
+                points[drag_index * 2] = mx;
+                points[drag_index * 2 + 1] = my;
+                UpdateVertexBuffer();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                break;
+            }
+        }
+    }
+    return 0;
 
     case WM_LBUTTONUP:
         is_mouse_down = false;
-        lines.push_back(Line(
-            drag_start_x, drag_start_y,
-            LOWORD(lParam), HIWORD(lParam)));
         UpdateVertexBuffer();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -136,25 +144,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_MOUSEMOVE:
         if (is_mouse_down)
         {
-            POINT pt;
-            GetCursorPos(&pt);
-            ScreenToClient(hwnd, &pt);
-
-            GLfloat vertices[] = {
-                drag_start_x, drag_start_y,
-                static_cast<GLfloat>(pt.x),
-                static_cast<GLfloat>(pt.y)
-            };
-
-            glNamedBufferSubData(positionBuffer,
-                0, 4 * sizeof(GLfloat), vertices);
+            points[drag_index * 2] = LOWORD(lParam);
+            points[drag_index * 2 + 1] = HIWORD(lParam);
+            UpdateVertexBuffer();
             InvalidateRect(hwnd, nullptr, FALSE);
         }
-        return 0;
-
-    case WM_RBUTTONDOWN:
-        lines.clear();
-        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_DESTROY:
@@ -278,20 +272,30 @@ GLuint LoadShader()
     return program;
 }
 
-void SetupModel()
+void SetupModel(HWND hwnd)
 {
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+
+    float x = rect.right / 2.0f;
+    float y = rect.bottom / 2.0f;
+    float r = 100.0f;
+
+    points[0] = x + r * std::cosf(pi * 2.0f / 12.0f * 1.0f);
+    points[1] = y + r * std::sinf(pi * 2.0f / 12.0f * 1.0f);
+    points[2] = x + r * std::cosf(pi * 2.0f / 12.0f * 5.0f);
+    points[3] = y + r * std::sinf(pi * 2.0f / 12.0f * 5.0f);
+    points[4] = x + r * std::cosf(pi * 2.0f / 12.0f * 9.0f);
+    points[5] = y + r * std::sinf(pi * 2.0f / 12.0f * 9.0f);
+
     // Vertex Buffer
     GLuint positionLocation = 0;
     GLuint positionBindindex = 0;
 
     glCreateBuffers(1, &positionBuffer);
 
-    GLfloat positionData[] = {
-        0.0f, 0.0f, 0.0f, 0.0f
-    };
-
     glNamedBufferData(positionBuffer,
-        sizeof(positionData), positionData, GL_DYNAMIC_DRAW);
+        sizeof(points), points, GL_DYNAMIC_DRAW);
 
     // Vertex Array
     glCreateVertexArrays(1, &vertexArray);
@@ -308,20 +312,8 @@ void SetupModel()
 
 void UpdateVertexBuffer()
 {
-    std::size_t size = (lines.size() + 1) * 4 * sizeof(GLfloat);
-    GLfloat *vertices = new GLfloat[size];
-
-    for (int i = 0; i < lines.size(); ++i)
-    {
-        vertices[(i + 1) * 4 + 0] = lines[i].x0;
-        vertices[(i + 1) * 4 + 1] = lines[i].y0;
-        vertices[(i + 1) * 4 + 2] = lines[i].x1;
-        vertices[(i + 1) * 4 + 3] = lines[i].y1;
-    }
-
-    glNamedBufferData(positionBuffer, size, vertices, GL_DYNAMIC_DRAW);
-
-    delete[] vertices;
+    glNamedBufferSubData(positionBuffer,
+        drag_index * 2 * sizeof(float), sizeof(float) * 2, points + drag_index * 2);
 }
 
 void Paint(HWND hwnd)
@@ -332,17 +324,11 @@ void Paint(HWND hwnd)
     glClear(GL_COLOR_BUFFER_BIT);
 
     glBindVertexArray(vertexArray);
-    if (is_mouse_down)
-    {
-        glDrawArrays(GL_LINES, 0, 
-            static_cast<GLsizei>(lines.size()) * 2 + 2);
-    }
-    else
-    {
-        glDrawArrays(GL_LINES, 2, 
-            static_cast<GLsizei>(lines.size()) * 2);
-    }
-    
+    glUniform3f(color, 0.0f, 0.6f, 0.6f);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glUniform3f(color, 0.0f, 0.4f, 0.4f);
+    glDrawArrays(GL_POINTS, 0, 3);
+
     SwapBuffers(hdc);
     EndPaint(hwnd, &ps);
 }

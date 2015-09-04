@@ -4,40 +4,32 @@
 #include <tchar.h>
 #include <stdio.h>
 #include <vector>
+#include <cmath>
 #include "glcorearb.h"
 #include "wglext.h"
 #include "OpenGL45.h"
 #include "resource.h"
-
-struct Line
-{
-    float x0;
-    float y0;
-    float x1;
-    float y1;
-
-    Line() : x0(0.0f), y0(0.0f), x1(0.0f), y1(0.0f) {}
-    Line(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1)
-        : x0(x0), y0(y0), x1(x1), y1(y1) { }
-};
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 HGLRC CreateOpenGLContext(HWND hwnd);
 void DeleteOpenGLContext(HGLRC hglrc);
 void RegisterErrorCallback();
 GLuint LoadShader();
-void SetupModel();
+void SetupModel(HWND hwnd);
 void UpdateVertexBuffer();
 void Paint(HWND hwnd);
 
 static FILE *logFile;
 
-static GLuint positionBuffer;
-static GLuint vertexArray;
+static GLuint controlPointBuffer;
+static GLuint vezierLineBuffer;
+static GLuint controlPointArray;
+static GLuint vezierLineArray;
 
-static std::vector<Line> lines;
-static float drag_start_x;
-static float drag_start_y;
+static GLfloat controlPoints[4 * 2];
+static GLfloat vezierLines[100 * 2];
+
+static int drag_index;
 static bool is_mouse_down = false;
 
 int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLine, int nCmdShow)
@@ -65,9 +57,9 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdL
     RegisterClassEx(&wcex);
 
     HWND hwnd = CreateWindow(
-        class_name, TEXT("Step 11"),
+        class_name, TEXT("Step 12"),
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
+        CW_USEDEFAULT, CW_USEDEFAULT, 640, 480,
         nullptr, nullptr, hInstance, nullptr);
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -101,8 +93,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         program = LoadShader();
         width = glGetUniformLocation(program, "width");
         height = glGetUniformLocation(program, "height");
-        SetupModel();
+        SetupModel(hwnd);
+        UpdateVertexBuffer();
         glClearColor(0.6f, 0.8f, 0.8f, 1.0f);
+        glPointSize(8.0f);
         glLineWidth(2.0f);
         return 0;
 
@@ -118,17 +112,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         return 0;
 
     case WM_LBUTTONDOWN:
-        is_mouse_down = true;
-        drag_start_x = LOWORD(lParam);
-        drag_start_y = HIWORD(lParam);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        {
+            float mx = LOWORD(lParam);
+            float my = HIWORD(lParam);
+
+            for (int i = 0; i < 4; ++i)
+            {
+                float px = controlPoints[i * 2];
+                float py = controlPoints[i * 2 + 1];
+                if (std::sqrtf((px - mx) * (px - mx) + (py - my) * (py - my)) < 5.0f)
+                {
+                    drag_index = i;
+                    is_mouse_down = true;
+                    controlPoints[drag_index * 2] = mx;
+                    controlPoints[drag_index * 2 + 1] = my;
+                    UpdateVertexBuffer();
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    break;
+                }
+            }
+        }
         return 0;
 
     case WM_LBUTTONUP:
         is_mouse_down = false;
-        lines.push_back(Line(
-            drag_start_x, drag_start_y,
-            LOWORD(lParam), HIWORD(lParam)));
         UpdateVertexBuffer();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -136,25 +143,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_MOUSEMOVE:
         if (is_mouse_down)
         {
-            POINT pt;
-            GetCursorPos(&pt);
-            ScreenToClient(hwnd, &pt);
-
-            GLfloat vertices[] = {
-                drag_start_x, drag_start_y,
-                static_cast<GLfloat>(pt.x),
-                static_cast<GLfloat>(pt.y)
-            };
-
-            glNamedBufferSubData(positionBuffer,
-                0, 4 * sizeof(GLfloat), vertices);
+            controlPoints[drag_index * 2] = LOWORD(lParam);
+            controlPoints[drag_index * 2 + 1] = HIWORD(lParam);
+            UpdateVertexBuffer();
             InvalidateRect(hwnd, nullptr, FALSE);
         }
-        return 0;
-
-    case WM_RBUTTONDOWN:
-        lines.clear();
-        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_DESTROY:
@@ -278,50 +271,79 @@ GLuint LoadShader()
     return program;
 }
 
-void SetupModel()
+void SetupModel(HWND hwnd)
 {
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+
+    controlPoints[0] = controlPoints[2] = rect.right / 4.0f;
+    controlPoints[4] = controlPoints[6] = controlPoints[0] * 3.0f;
+    controlPoints[1] = controlPoints[7] = rect.bottom / 4.0f;
+    controlPoints[3] = controlPoints[5] = controlPoints[1] * 3.0f;
+
     // Vertex Buffer
-    GLuint positionLocation = 0;
-    GLuint positionBindindex = 0;
+    GLuint controlPointLocation = 0;
+    GLuint controlPointBindindex = 0;
 
-    glCreateBuffers(1, &positionBuffer);
+    glCreateBuffers(1, &controlPointBuffer);
 
-    GLfloat positionData[] = {
-        0.0f, 0.0f, 0.0f, 0.0f
-    };
+    glNamedBufferData(controlPointBuffer,
+        sizeof(controlPoints), controlPoints, GL_DYNAMIC_DRAW);
 
-    glNamedBufferData(positionBuffer,
-        sizeof(positionData), positionData, GL_DYNAMIC_DRAW);
+    GLuint vezierLineLocation = 0;
+    GLuint vezierLineBindIndex = 0;
+
+    glCreateBuffers(1, &vezierLineBuffer);
+
+    glNamedBufferData(vezierLineBuffer,
+        sizeof(vezierLines), vezierLines, GL_DYNAMIC_DRAW);
 
     // Vertex Array
-    glCreateVertexArrays(1, &vertexArray);
+    glCreateVertexArrays(1, &controlPointArray);
 
-    glEnableVertexArrayAttrib(vertexArray, positionLocation);
-    glVertexArrayAttribFormat(vertexArray, positionLocation,
+    glEnableVertexArrayAttrib(controlPointArray, controlPointLocation);
+    glVertexArrayAttribFormat(controlPointArray, controlPointLocation,
         2, GL_FLOAT, GL_FALSE, 0);
 
-    glVertexArrayAttribBinding(vertexArray, positionLocation,
-        positionBindindex);
-    glVertexArrayVertexBuffer(vertexArray, positionBindindex,
-        positionBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
+    glVertexArrayAttribBinding(controlPointArray, controlPointLocation,
+        controlPointBindindex);
+    glVertexArrayVertexBuffer(controlPointArray, controlPointBindindex,
+        controlPointBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
+
+    glCreateVertexArrays(1, &vezierLineArray);
+
+    glEnableVertexArrayAttrib(vezierLineArray, vezierLineLocation);
+    glVertexArrayAttribFormat(vezierLineArray, vezierLineLocation,
+        2, GL_FLOAT, GL_FALSE, 0);
+
+    glVertexArrayAttribBinding(vezierLineArray, vezierLineLocation,
+        vezierLineBindIndex);
+    glVertexArrayVertexBuffer(vezierLineArray, vezierLineBindIndex,
+        vezierLineBuffer, static_cast<GLintptr>(0), sizeof(GLfloat) * 2);
 }
 
 void UpdateVertexBuffer()
 {
-    std::size_t size = (lines.size() + 1) * 4 * sizeof(GLfloat);
-    GLfloat *vertices = new GLfloat[size];
+    glNamedBufferSubData(controlPointBuffer, 
+        drag_index * 2 * sizeof(float), sizeof(float) * 2, controlPoints + drag_index * 2);
 
-    for (int i = 0; i < lines.size(); ++i)
+    for (int i = 0; i < 100; ++i)
     {
-        vertices[(i + 1) * 4 + 0] = lines[i].x0;
-        vertices[(i + 1) * 4 + 1] = lines[i].y0;
-        vertices[(i + 1) * 4 + 2] = lines[i].x1;
-        vertices[(i + 1) * 4 + 3] = lines[i].y1;
+        float t = i / 100.0f;
+        vezierLines[i * 2] =
+            std::powf(1.0f - t, 3.0f) * controlPoints[0] +
+            3.0f * std::powf(1.0f - t, 2.0f) * t * controlPoints[2] +
+            3.0f * (1.0f - t) * std::powf(t, 2.0f) * controlPoints[4] +
+            std::powf(t, 3.0f) * controlPoints[6];
+        vezierLines[i * 2 + 1] =
+            std::powf(1.0f - t, 3.0f) * controlPoints[1] +
+            3.0f * std::powf(1.0f - t, 2.0f) * t * controlPoints[3] +
+            3.0f * (1.0f - t) * std::powf(t, 2.0f) * controlPoints[5] +
+            std::powf(t, 3.0f) * controlPoints[7];
     }
 
-    glNamedBufferData(positionBuffer, size, vertices, GL_DYNAMIC_DRAW);
-
-    delete[] vertices;
+    glNamedBufferSubData(vezierLineBuffer,
+        0, sizeof(vezierLines), vezierLines);
 }
 
 void Paint(HWND hwnd)
@@ -331,17 +353,14 @@ void Paint(HWND hwnd)
 
     glClear(GL_COLOR_BUFFER_BIT);
 
-    glBindVertexArray(vertexArray);
-    if (is_mouse_down)
-    {
-        glDrawArrays(GL_LINES, 0, 
-            static_cast<GLsizei>(lines.size()) * 2 + 2);
-    }
-    else
-    {
-        glDrawArrays(GL_LINES, 2, 
-            static_cast<GLsizei>(lines.size()) * 2);
-    }
+    // êßå‰ì_
+    glBindVertexArray(controlPointArray);
+    glDrawArrays(GL_POINTS, 0, 4);
+    glDrawArrays(GL_LINES, 0, 4);
+
+    // ã»ê¸
+    glBindVertexArray(vezierLineArray);
+    glDrawArrays(GL_LINE_STRIP, 0, 100);
     
     SwapBuffers(hdc);
     EndPaint(hwnd, &ps);
